@@ -6,17 +6,22 @@
 # For conditions of distribution and use, see the disclaimer
 # and license in png.h
 
-cmake_minimum_required(VERSION 2.4.4)
+cmake_minimum_required(VERSION 3.0)
 set(CMAKE_ALLOW_LOOSE_LOOP_CONSTRUCTS true)
 
 set(CMAKE_CONFIGURATION_TYPES "Release;Debug;MinSizeRel;RelWithDebInfo")
 
-project(libpng C)
+project(
+    libpng 
+    VERSION 1.6.12
+    LANGUAGES C
+)
 enable_testing()
 
 set(PNGLIB_MAJOR 1)
 set(PNGLIB_MINOR 6)
 set(PNGLIB_RELEASE 12)
+
 set(PNGLIB_NAME libpng${PNGLIB_MAJOR}${PNGLIB_MINOR})
 set(PNGLIB_VERSION ${PNGLIB_MAJOR}.${PNGLIB_MINOR}.${PNGLIB_RELEASE})
 
@@ -55,6 +60,22 @@ option(PNG_TESTS  "Build libpng tests" YES)
 # Many more configuration options could be added here
 option(PNG_DEBUG         "Build with debug output" NO)
 option(PNGARG            "Disable ANSI-C prototypes" NO)
+
+if (MSVC)
+    if (NOT DEFINED ARCH)
+        set (ARCH ${MSVC_C_ARCHITECTURE_ID})
+    endif()
+
+    # use boost convention - you cant' get the VC compiler without VS
+    if (NOT DEFINED MSVCVER)
+        math(EXPR MSVCVER "(${MSVC_VERSION} / 10) - 60")
+    endif()
+    
+    # add the runtime version and target architecture into the DLL name per MS
+    # guidelines
+    set(MSVC_SHARED_SUFFIX_BASE "-vc${MSVCVER}-mt-${ARCH}")
+    set(CMAKE_SHARED_LIBRARY_SUFFIX "${MSVC_SHARED_SUFFIX_BASE}.dll")
+endif()
 
 # SET LIBNAME
 set(PNG_LIB_NAME png${PNGLIB_MAJOR}${PNGLIB_MINOR})
@@ -98,6 +119,9 @@ set(libpng_sources
   pngwtran.c
   pngwutil.c
 )
+set(libpng_sources_shared
+  ${libpng_sources}
+)
 set(pngtest_sources
   pngtest.c
 )
@@ -110,7 +134,26 @@ set(pngstest_sources
 # SOME NEEDED DEFINITIONS
 
 if(MSVC)
-  add_definitions(-D_CRT_SECURE_NO_DEPRECATE)
+    add_definitions(-D_CRT_SECURE_NO_DEPRECATE)
+    add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
+    
+    set(VER_PRODUCTNAME_STR "PNG image compression library")
+    set(VER_LEGALCOPYRIGHT_STR "(C) 1998-2009 Glenn Randers-Pehrson et al.")
+    set(VER_STR "${PROJECT_VERSION}")
+    set(VER_NUM "${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0")
+    
+    set(local_lib_name lib${PNG_LIB_NAME})
+    
+    set(VER_ORIGINALFILENAME_STR "${local_lib_name}${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    set(VER_INTERNALNAME_STR "libpng")
+    set(VER_FILEDESCRIPTION_STR "libpng Dynamic Link Library")
+    configure_file(
+         ${CMAKE_SOURCE_DIR}/version.rc.cmakein
+         ${CMAKE_CURRENT_BINARY_DIR}/version.rc
+         @ONLY
+     )         
+    
+    list(APPEND libpng_sources_shared ${CMAKE_CURRENT_BINARY_DIR}/version.rc)
 endif(MSVC)
 
 if(PNG_DEBUG)
@@ -123,14 +166,19 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${ZLIB_INCLUDE_DIR})
 unset(PNG_LIB_TARGETS)
 
 if(PNG_SHARED)
-  add_library(${PNG_LIB_NAME} SHARED ${libpng_sources})
-  set(PNG_LIB_TARGETS ${PNG_LIB_NAME})
-  if(MSVC)
-    # msvc does not append 'lib' - do it here to have consistent name
-    set_target_properties(${PNG_LIB_NAME} PROPERTIES PREFIX "lib")
-    set_target_properties(${PNG_LIB_NAME} PROPERTIES IMPORT_PREFIX "lib")
-  endif()
-  target_link_libraries(${PNG_LIB_NAME} ${ZLIB_LIBRARY} ${M_LIBRARY})
+    add_library(${PNG_LIB_NAME} SHARED ${libpng_sources_shared})
+    set(PNG_LIB_TARGETS ${PNG_LIB_NAME})
+    if(MSVC)
+        # msvc does not append 'lib' - do it here to have consistent name
+        set_target_properties(${PNG_LIB_NAME} PROPERTIES PREFIX "lib")
+        set_target_properties(${PNG_LIB_NAME} PROPERTIES IMPORT_PREFIX "lib")
+    endif()
+
+    if(WIN32)
+        set_target_properties(${PNG_LIB_NAME} PROPERTIES DEFINE_SYMBOL PNG_BUILD_DLL)
+    endif()
+
+    target_link_libraries(${PNG_LIB_NAME} ${ZLIB_LIBRARY} ${M_LIBRARY})
 endif()
 
 if(PNG_STATIC)
@@ -149,10 +197,6 @@ if(NOT PNG_LIB_TARGETS)
   message(SEND_ERROR
     "No library variant selected to build. "
     "Please enable at least one of the following options: PNG_STATIC, PNG_SHARED")
-endif()
-
-if(PNG_SHARED AND WIN32)
-  set_target_properties(${PNG_LIB_NAME} PROPERTIES DEFINE_SYMBOL PNG_BUILD_DLL)
 endif()
 
 if(PNG_TESTS AND PNG_SHARED)
